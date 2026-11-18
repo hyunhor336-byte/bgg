@@ -1,0 +1,78 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      APP_ID: com.horror.game
+      APP_NAME: Horror Game
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find game HTML file
+        run: |
+          FILE=$(find . -maxdepth 3 -iname "*.html" -not -path "./app/*" -not -path "./node_modules/*" -not -path "./.git/*" | head -n 1)
+          if [ -z "$FILE" ]; then
+            echo "::error::No .html file found in the repo. Upload your game file."
+            exit 1
+          fi
+          echo "Using: $FILE"
+          cp "$FILE" /tmp/game.html
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Create Capacitor project
+        run: |
+          mkdir -p app/www
+          cp /tmp/game.html app/www/index.html
+          cd app
+          npm init -y
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          cat > capacitor.config.json <<EOF
+          {
+            "appId": "$APP_ID",
+            "appName": "$APP_NAME",
+            "webDir": "www"
+          }
+          EOF
+          npx cap add android
+
+      - name: Add microphone permissions
+        run: |
+          MANIFEST=app/android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-feature android:name="android.hardware.microphone" android:required="false" />\n    <application#' "$MANIFEST"
+          echo "---- Manifest ----"
+          cat "$MANIFEST"
+
+      - name: Sync web files
+        run: |
+          cd app
+          npx cap sync android
+
+      - name: Build debug APK
+        run: |
+          cd app/android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: horror-game-apk
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
